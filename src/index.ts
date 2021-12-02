@@ -54,7 +54,18 @@ export const photoUploader = functions.pubsub
   .schedule('every 5 minutes')
   .onRun(async () => {
     const last_check_time = (await last_check_ref.get()).val();
-    const next_check_time = Date.now();
+
+    // next check time should be offset by -24 hours to be sure we don't accidentally miss images.
+    // we store image upload status as well, so this should be fine.
+    const next_check_time = Math.floor(
+      new Date(new Date().getTime() - 24 * 60 * 60 * 1000).getTime() / 1000
+    );
+
+    console.log(
+      `Fetching photos from Flickr posted since ${new Date(
+        last_check_time * 1000
+      ).toISOString()}.`
+    );
 
     // get list of photos from Flickr
     const photos = await flickr.people
@@ -69,6 +80,8 @@ export const photoUploader = functions.pubsub
       .then((res: Response) => res.body)
       .then((res: any) => res.photos.photo);
 
+    console.log(`Fetched ${photos.length} new photos from Flickr.`);
+
     // for each photo, we'll download it, upload it to Ghost and create a new post
     for (const photo of photos) {
       const current_status = await (
@@ -76,7 +89,7 @@ export const photoUploader = functions.pubsub
       ).val();
 
       if (current_status && current_status.success) {
-        console.log(`skipping ${photo.id}`);
+        console.log(`Skipping ${photo.id} (${photo.title}).`);
         continue;
       }
 
@@ -92,16 +105,16 @@ export const photoUploader = functions.pubsub
       };
 
       try {
-        // download photo
+        console.log(`Downloading ${photo.id} (${photo.title}) from Flickr...`);
         const filePath = await downloadImage(photo.url_o);
 
-        // upload image to ghost
+        console.log(`Uploading ${photo.id} (${photo.title}) to Ghost...`);
         const imageUpload = await ghost.images.upload({
           ref: filePath,
           file: path.resolve(filePath),
         });
 
-        // delete file once we're done with it
+        console.log(`Deleting ${photo.id} (${photo.title})...`);
         await fsPromises.unlink(filePath);
 
         // ensure all tags are created
@@ -120,7 +133,9 @@ export const photoUploader = functions.pubsub
         // This seems very brittle and should probably be done in a better way.
         const published_at = new Date(photo.dateupload * 1000).toISOString();
 
-        // create post in ghost
+        console.log(
+          `Creating new post for ${photo.id} (${photo.title}) in Ghost...`
+        );
         await ghost.posts.add(
           {
             title: photo.title,
@@ -133,6 +148,7 @@ export const photoUploader = functions.pubsub
           { source: 'html' }
         );
       } catch (e) {
+        console.log('Error caught!');
         photoStatus.success = false;
         photoStatus.error = (e as any).message;
         console.error(e);
@@ -146,7 +162,7 @@ export const photoUploader = functions.pubsub
 
 const downloadImage = (url: string): Promise<string> => {
   return new Promise((resolve, reject) => {
-    const destination = path.basename(url);
+    const destination = path.resolve(`/tmp/${path.basename(url)}`);
     const fileStream = fs.createWriteStream(destination);
     const httpRequest = https.get(url, (resp) => {
       resp.pipe(fileStream);
