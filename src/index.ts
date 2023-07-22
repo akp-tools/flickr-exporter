@@ -19,7 +19,7 @@ admin.initializeApp(functions.config().firebase);
 const ghost = new GhostAdminAPI({
   url: functions.config().ghost.url,
   key: functions.config().ghost.key,
-  version: 'v3',
+  version: 'v5.41',
   // I really don't want to override makeRequest here, but the implementation within @tryghost/admin-api doesn't
   // set maxBodyLength to Infinity, and that's required because images are big.
   makeRequest: ({ url, method, data, params = {}, headers = {} }: any) => {
